@@ -14,11 +14,11 @@ connectDB();
 
 const app = express();
 
+// Allow all cross-origin requests
 app.use(cors({
-  origin: process.env.ALLOWED_ORIGINS ? 
-    process.env.ALLOWED_ORIGINS.split(',') : 
-    ['http://localhost:5173', 'http://localhost:3001', 'http://localhost:3000', 'http://localhost:8080'],
-  credentials: true,
+  origin: '*',
+  methods: ['GET', 'POST', 'DELETE', 'UPDATE', 'PUT', 'PATCH'],
+  allowedHeaders: '*'
 }));
 
 // Body parsers
