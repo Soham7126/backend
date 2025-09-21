@@ -85,7 +85,24 @@ const login = async (req, res) => {
 };
 
 const getMe = async (req, res) => {
-  res.json(req.user);
+  try {
+    // Get user from token in cookie if available
+    const token = req.cookies.token;
+    if (!token) {
+      return res.status(200).json({ message: 'No user session' });
+    }
+    
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    const user = await User.findById(decoded.id).select('-password');
+    
+    if (!user) {
+      return res.status(200).json({ message: 'No user found' });
+    }
+    
+    res.json(user);
+  } catch (error) {
+    res.status(200).json({ message: 'Invalid session' });
+  }
 };
 
 const logout = (req, res) => {

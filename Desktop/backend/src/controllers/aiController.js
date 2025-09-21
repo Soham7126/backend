@@ -6,7 +6,7 @@ const genAI = new GoogleGenerativeAI(process.env.API_KEY);
 
 const generateQuestion = async (req, res) => {
   const { history } = req.body;
-  const userId = req.user.id;
+  // Removed user ID requirement
 
   try {
     const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
@@ -201,7 +201,7 @@ Generate question ${questionCount + 1} following these rules exactly.`;
 
 const generateRoadmaps = async (req, res) => {
   const { history } = req.body;
-  const userId = req.user.id;
+  // Removed user ID requirement
 
   try {
     const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
@@ -533,7 +533,7 @@ Generate THREE career roadmaps following these rules exactly. Each roadmap shoul
 
 const chatWithMentor = async (req, res) => {
   const { message, careerPath, context } = req.body;
-  const userId = req.user.id;
+  // Removed user ID requirement
 
   try {
     if (!message) {
@@ -554,7 +554,9 @@ const chatWithMentor = async (req, res) => {
 };
 
 const getChatHistory = async (req, res) => {
-  const userId = req.user.id;
+  // Return empty history since we're not tracking users
+  res.json({ messages: [] });
+  return;
 
   try {
     const conversation = await Conversation.findOne({ userId });

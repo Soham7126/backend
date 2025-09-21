@@ -5,13 +5,12 @@ const {
   chatWithMentor,
   getChatHistory,
 } = require('../controllers/aiController');
-const { protect } = require('../middleware/authMiddleware');
 
 const router = express.Router();
 
-router.post('/generate-question', protect, generateQuestion);
-router.post('/generate-roadmaps', protect, generateRoadmaps);
-router.post('/chat', protect, chatWithMentor);
-router.get('/chat', protect, getChatHistory);
+router.post('/generate-question', generateQuestion);
+router.post('/generate-roadmaps', generateRoadmaps);
+router.post('/chat', chatWithMentor);
+router.get('/chat', getChatHistory);
 
 module.exports = router;

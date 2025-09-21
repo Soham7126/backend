@@ -1,13 +1,12 @@
 const express = require('express');
 const Todo = require('../models/Todo');
-const { protect } = require('../middleware/authMiddleware');
 
 const router = express.Router();
 
-// Get all todos for the logged-in user
-router.get('/', protect, async (req, res) => {
+// Get all todos (removed user-specific filtering)
+router.get('/', async (req, res) => {
   try {
-    const todos = await Todo.find({ userId: req.user.id }).sort({ createdAt: -1 });
+    const todos = await Todo.find().sort({ createdAt: -1 });
     res.json(todos);
   } catch (error) {
     console.error('Error fetching todos:', error);
@@ -15,8 +14,8 @@ router.get('/', protect, async (req, res) => {
   }
 });
 
-// Create a new todo
-router.post('/', protect, async (req, res) => {
+// Create a new todo (removed authentication)
+router.post('/', async (req, res) => {
   try {
     const { title, description, status } = req.body;
 
@@ -25,7 +24,6 @@ router.post('/', protect, async (req, res) => {
     }
 
     const todo = new Todo({
-      userId: req.user.id,
       title,
       description,
       status: status || 'not-started'
@@ -39,11 +37,11 @@ router.post('/', protect, async (req, res) => {
   }
 });
 
-// Update a todo
-router.patch('/:id', protect, async (req, res) => {
+// Update a todo (removed authentication)
+router.patch('/:id', async (req, res) => {
   try {
     const { title, description, status } = req.body;
-    const todo = await Todo.findOne({ _id: req.params.id, userId: req.user.id });
+    const todo = await Todo.findById(req.params.id);
 
     if (!todo) {
       return res.status(404).json({ error: 'Todo not found' });
@@ -61,10 +59,10 @@ router.patch('/:id', protect, async (req, res) => {
   }
 });
 
-// Delete a todo
-router.delete('/:id', protect, async (req, res) => {
+// Delete a todo (removed authentication)
+router.delete('/:id', async (req, res) => {
   try {
-    const todo = await Todo.findOneAndDelete({ _id: req.params.id, userId: req.user.id });
+    const todo = await Todo.findByIdAndDelete(req.params.id);
 
     if (!todo) {
       return res.status(404).json({ error: 'Todo not found' });
