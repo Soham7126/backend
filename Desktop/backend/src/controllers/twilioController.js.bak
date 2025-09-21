@@ -1,0 +1,327 @@
+const twilio = require('twilio');
+const CallLog = require('../models/CallLog');
+const TwiMLBuilder = require('../utils/twiml');
+const aiService = require('../services/aiService');
+
+const client = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
+
+exports.startCall = async (req, res) => {
+  try {
+    console.log('Starting Twilio call...');
+    console.log('Request body:', req.body);
+    console.log('User ID:', req.user?.id);
+    
+    const { toPhoneNumber, phoneNumber, careerPath } = req.body;
+    const userId = req.user.id;
+    const finalPhoneNumber = toPhoneNumber || phoneNumber;
+
+    if (!finalPhoneNumber) {
+      return res.status(400).json({ error: 'Phone number is required (as either phoneNumber or toPhoneNumber)' });
+    }
+
+    // Check if BASE_URL is configured
+    if (!process.env.BASE_URL) {
+      console.error('BASE_URL environment variable is not set');
+      return res.status(500).json({ error: 'Server configuration error: BASE_URL not set' });
+    }
+
+    console.log('Creating call with Twilio...');
+    
+    // First check if the number is verified
+    const verifiedNumbers = await client.outgoingCallerIds.list();
+    const isVerified = verifiedNumbers.some(v => v.phoneNumber === finalPhoneNumber);
+    
+    if (!isVerified) {
+      // If not verified, create a verification
+      const verification = await client.validationRequests.create({
+        friendlyName: 'Career Mentor User',
+        phoneNumber: finalPhoneNumber
+      });
+      
+      return res.status(400).json({ 
+        error: 'Phone number needs verification',
+        details: 'We are sending you a verification code. Please verify your number in the Twilio console.',
+        verificationSid: verification.sid
+      });
+    }
+    
+    // If verified, proceed with the call
+    const call = await client.calls.create({
+      to: finalPhoneNumber,
+      from: process.env.TWILIO_PHONE_NUMBER,
+      url: `${process.env.BASE_URL}/api/twilio/voice?careerPath=${encodeURIComponent(careerPath || '')}`
+    });
+
+    console.log('Call created successfully:', call.sid);
+
+    // Save call log
+    const callLog = new CallLog({
+      userId,
+      callSid: call.sid,
+      to: finalPhoneNumber,
+      from: process.env.TWILIO_PHONE_NUMBER,
+      status: 'initiated',
+      careerPath: careerPath || 'General Career Advice'
+    });
+
+    await callLog.save();
+    console.log('Call log saved:', callLog._id);
+
+    res.json({ 
+      success: true, 
+      callSid: call.sid,
+      message: 'Call initiated successfully'
+    });
+  } catch (error) {
+    console.error('Error starting call:', error);
+    res.status(500).json({ 
+      error: 'Failed to start call',
+      details: error.message 
+    });
+  }
+};
+
+const { generateTwilioResponse } = require('../utils/prompts');
+
+const voice = async (req, res) => {
+  // Check both query params and body since Twilio might send either
+  const careerPath = req.query.careerPath || req.body.careerPath;
+  const twiml = new twilio.twiml.VoiceResponse();
+  
+  try {
+    console.log('Voice webhook called');
+    console.log('Query params:', req.query);
+    console.log('Body:', req.body);
+    console.log('Career path:', careerPath);
+
+    // Validate required parameters
+    if (!careerPath) {
+      throw new Error('Career path is required');
+    }
+
+    // Generate initial greeting
+    twiml.say({
+      voice: 'Polly.Amy-Neural'
+    }, `Hello! I'm your AI career mentor for ${careerPath}. I'm here to help guide you on your career journey.`);
+
+    // Add a brief pause
+    twiml.pause({ length: 1 });
+
+    // Add gather for user response
+    const gather = twiml.gather({
+      input: 'speech',
+      action: '/api/twilio/respond',  // Using relative path since base path is already handled
+      method: 'POST',
+      speechTimeout: 'auto',
+      language: 'en-US'
+    });
+
+    gather.say({
+      voice: 'Polly.Amy-Neural'
+    }, `What aspects of ${careerPath} interest you the most? Feel free to share your thoughts.`);
+
+    // Add a fallback message and repeat the question if no input is received
+    twiml.say({
+      voice: 'Polly.Amy-Neural'
+    }, "I didn't hear anything. Let me repeat the question.");
+
+    // Add another gather with the same question
+    const fallbackGather = twiml.gather({
+      input: 'speech',
+      action: '/api/twilio/respond',
+      method: 'POST',
+      speechTimeout: 'auto',
+      language: 'en-US'
+    });
+
+    fallbackGather.say({
+      voice: 'Polly.Amy-Neural'
+    }, `What aspects of ${careerPath} interest you the most? Feel free to share your thoughts.`);
+
+    console.log('Generated TwiML:', twiml.toString());
+
+    res.type('text/xml');
+    res.send(twiml.toString());
+  } catch (error) {
+    console.error('Error in voice webhook:', error);
+    
+    // Fallback TwiML in case of error
+    twiml.say({
+      voice: 'Polly.Amy-Neural'
+    }, `I apologize, but I'm having trouble connecting right now. Please try again in a few moments.`);
+    
+    res.type('text/xml');
+    res.send(twiml.toString());
+  }
+};
+const Conversation = require('../models/Conversation');
+
+const industryOptions = [
+  'Technology', 'Healthcare', 'Finance', 'Education', 'Manufacturing',
+  'Retail', 'Entertainment', 'Construction', 'Transportation', 'Energy'
+];
+
+const professionalGoals = [
+  'Leadership abilities',
+  'Industry expertise',
+  'Innovation and creativity',
+  'Interpersonal skills',
+  'Social impact'
+];
+
+const respond = async (req, res) => {
+  const twiml = new twilio.twiml.VoiceResponse();
+
+  try {
+    // Debug logging
+    console.log('Respond webhook called');
+    console.log('Headers:', req.headers);
+    console.log('Query params:', req.query);
+    console.log('Body:', req.body);
+
+    const conversationId = req.query.conversationId || req.body.conversationId;
+    const step = parseInt(req.query.step || req.body.step || '0');
+
+    // Get or create conversation
+    let conversation = await Conversation.findOne({ conversationId });
+    if (!conversation) {
+      conversation = new Conversation({
+        conversationId,
+        currentStep: step,
+        responses: []
+      });
+    }
+
+    // Twilio sends form data, so SpeechResult should be directly on req.body
+    const speechResult = (req.body && typeof req.body === 'object') 
+      ? req.body.SpeechResult || 
+        req.body.speech_result || 
+        req.body.Transcript || 
+        req.body.transcript || 
+        '' 
+      : '';                    // Default to empty string
+    ) : '';
+
+    // Log what we found
+    console.log('Extracted speech result:', speechResult);
+    
+    // Determine if we got any input
+    const hasInput = Boolean(
+      req.body && (
+        'SpeechResult' in req.body ||
+        'speech_result' in req.body ||
+        'Transcript' in req.body ||
+        'transcript' in req.body
+      )
+    );
+
+    // Counter to track conversation turns
+    const turnCount = parseInt(req.query.turn || req.body.turn || '0');
+    
+    if (hasInput && speechResult) {
+      try {
+        // Get the career path from the initial query parameters that we'll pass through
+        const careerPath = req.query.careerPath || req.body.careerPath || 'your chosen field';
+        
+        // Generate AI response based on the speech input and conversation context
+        const context = {
+          turnCount,
+          previousResponses: req.body.previousResponses || [],
+          careerPath
+        };
+        
+        const aiResponse = await aiService.generateResponse(speechResult, careerPath, context);
+        
+        // Split the AI response into parts (the response and the question are typically separated)
+        const responseParts = aiResponse.split('?');
+        const mainResponse = responseParts[0];
+        const followUpQuestion = responseParts.length > 1 ? 
+          responseParts[1].trim() + '?' : 
+          "What are your thoughts on that?";
+        
+        // Deliver the AI response
+        twiml.say({
+          voice: 'Polly.Amy-Neural'
+        }, mainResponse);
+        
+        twiml.pause({ length: 1 });
+        
+        if (turnCount >= 4) {
+          // End the conversation after 5 turns with a personalized closing
+          const closingResponse = await aiService.generateAdvice(careerPath, 'next steps');
+          twiml.say({
+            voice: 'Polly.Amy-Neural'
+          }, closingResponse);
+          
+          twiml.say({
+            voice: 'Polly.Amy-Neural'
+          }, "Thank you for this valuable conversation. I wish you the best in your career journey!");
+          
+          twiml.hangup();
+        } else {
+          // Continue the conversation with the AI-generated follow-up
+          const gather = twiml.gather({
+            input: 'speech',
+            action: `/api/twilio/respond?turn=${turnCount + 1}&careerPath=${encodeURIComponent(careerPath)}`,
+            method: 'POST',
+            speechTimeout: 'auto',
+            language: 'en-US'
+          });
+
+          gather.say({
+            voice: 'Polly.Amy-Neural'
+          }, followUpQuestion);
+      }
+    } else {
+      // Handle no input case
+      twiml.say({
+        voice: 'Polly.Amy-Neural'
+      }, "I'm having trouble hearing you clearly. Could you please try again?");
+
+      const gather = twiml.gather({
+        input: 'speech',
+        action: `/api/twilio/respond?turn=${turnCount}`,
+        method: 'POST',
+        speechTimeout: 'auto',
+        language: 'en-US'
+      });
+
+      gather.say({
+        voice: 'Polly.Amy-Neural'
+      }, "Please share your thoughts with me.");
+    }
+
+    console.log('Generated response TwiML:', twiml.toString());
+    res.type('text/xml');
+    res.send(twiml.toString());
+
+  } catch (error) {
+    console.error('Error in respond webhook:', error);
+    
+    // Fallback TwiML in case of error
+    twiml.say({
+      voice: 'Polly.Amy-Neural'
+    }, "I apologize, but I'm having some trouble. Let's try one more time.");
+    
+    const gather = twiml.gather({
+      input: 'speech',
+      action: `/api/twilio/respond?turn=${req.query.turn || '0'}`,
+      method: 'POST',
+      speechTimeout: 'auto',
+      language: 'en-US'
+    });
+
+    gather.say({
+      voice: 'Polly.Amy-Neural'
+    }, "Please share your thoughts with me.");
+    
+    res.type('text/xml');
+    res.send(twiml.toString());
+  }
+};
+
+module.exports = {
+  startCall: exports.startCall,
+  voice,
+  respond,
+};
