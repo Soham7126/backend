@@ -255,10 +255,9 @@ const startCall = async (req, res) => {
   try {
     console.log("Starting Twilio call...");
     console.log("Request body:", req.body);
-    console.log("User ID:", req.user?.id);
 
-    const { toPhoneNumber, phoneNumber, careerPath } = req.body;
-    const userId = req.user.id;
+    const { toPhoneNumber, phoneNumber, careerPath, userId } = req.body;
+    // Now getting userId from request body instead of auth
     const finalPhoneNumber = toPhoneNumber || phoneNumber;
 
     if (!finalPhoneNumber) {
